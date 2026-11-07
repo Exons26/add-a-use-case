@@ -29,6 +29,7 @@ import static org.assertj.core.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -444,6 +445,53 @@ class EvaluationServiceTest {
     }
 
     @Test
+    void testAddPeerEvaluationOfADeactivatedStudent() {
+        // Given: BR-deactivated-student; the window for 2023-W31 is open and Woody is Amanda's teammate, but he is
+        // deactivated. There is no deactivation date, so the week does not matter.
+        LocalDate fixedDate = LocalDate.of(2023, 8, 13); // previous week is 2023-W31
+        Clock fixedClock = Clock.fixed(fixedDate.atStartOfDay(ZoneId.systemDefault()).toInstant(), ZoneId.systemDefault());
+        given(this.clock.instant()).willReturn(fixedClock.instant());
+        given(this.clock.getZone()).willReturn(fixedClock.getZone());
+        this.woody.setEnabled(false);
+
+        PeerEvaluation newPeerEvaluation = new PeerEvaluation("2023-W31", amanda, woody, List.of(), "public comment", "private comment");
+
+        // When
+        Throwable throwable = catchThrowable(() -> this.evaluationService.addPeerEvaluation(newPeerEvaluation));
+
+        // Then
+        assertThat(throwable)
+                .isInstanceOf(PeerEvaluationIllegalArgumentException.class)
+                .hasMessage("Woody Allen has been deactivated and can no longer be evaluated.");
+        verify(this.evaluationRepository, times(0)).save(any(PeerEvaluation.class));
+    }
+
+    @Test
+    void testUpdatePeerEvaluationOfADeactivatedStudent() {
+        // Given: BR-deactivated-student / BR-evaluation-editable-until-close; the window is open but Eric is deactivated
+        LocalDate fixedDate = LocalDate.of(2023, 8, 8); // previous week is 2023-W31
+        Clock fixedClock = Clock.fixed(fixedDate.atStartOfDay(ZoneId.systemDefault()).toInstant(), ZoneId.systemDefault());
+        given(this.clock.instant()).willReturn(fixedClock.instant());
+        given(this.clock.getZone()).willReturn(fixedClock.getZone());
+        this.eric.setEnabled(false);
+
+        PeerEvaluation oldPeerEvaluation = new PeerEvaluation("2023-W31", this.john, this.eric, List.of(), "public comment", "private comment");
+        oldPeerEvaluation.setPeerEvaluationId(1);
+        PeerEvaluation update = new PeerEvaluation("2023-W31", this.john, this.eric, List.of(), "new public comment", "new private comment");
+        given(this.evaluationRepository.findById(1)).willReturn(Optional.of(oldPeerEvaluation));
+
+        // When
+        Throwable throwable = catchThrowable(() -> this.evaluationService.updatePeerEvaluation(1, update));
+
+        // Then
+        assertThat(throwable)
+                .isInstanceOf(PeerEvaluationIllegalArgumentException.class)
+                .hasMessage("Eric Wong has been deactivated and can no longer be evaluated.");
+        assertThat(oldPeerEvaluation.getPublicComment()).isEqualTo("public comment");
+        verify(this.evaluationRepository, times(0)).save(any(PeerEvaluation.class));
+    }
+
+    @Test
     void testUpdatePeerEvaluationAfterTheSubmissionWindowClosed() {
         // Given
         // Sep 15, 2023 falls in 2023-W37, so the only week still open is 2023-W36 and this evaluation's has closed
@@ -590,6 +638,38 @@ class EvaluationServiceTest {
         assertThat(report.getPeerEvaluationAverages().get(1).getAverageTotalScore()).isCloseTo(50.0, within(0.01));
         assertThat(report.getPeerEvaluationAverages().get(2).getAverageTotalScore()).isCloseTo(51.0, within(0.01));
         assertThat(report.getPeerEvaluationAverages().get(3).getAverageTotalScore()).isCloseTo(52.0, within(0.01));
+    }
+
+    @Test
+    void testWeeklyReportKeepsADeactivatedStudentForAWeekWithEvaluationsOfHer() {
+        // Given: BR-deactivated-student; Eric is deactivated, and evaluations of him exist for 2023-W31
+        this.eric.setEnabled(false);
+        given(this.sectionRepository.findById(anyInt())).willReturn(Optional.of(new Section("2023-2024", LocalDate.of(2023, 8, 14), LocalDate.of(2024, 4, 29), true, DayOfWeek.MONDAY, LocalTime.of(23, 59), DayOfWeek.TUESDAY, LocalTime.of(23, 59))));
+        given(this.studentRepository.findBySectionSectionId(anyInt())).willReturn(this.students);
+        given(this.evaluationRepository.existsByWeekAndEvaluateeId("2023-W31", 4)).willReturn(true);
+        given(this.evaluationRepository.findByWeekAndEvaluateeId(eq("2023-W31"), anyInt())).willReturn(List.of());
+
+        // When
+        WeeklyPeerEvaluationReport report = this.evaluationService.generateWeeklyPeerEvaluationReportForSection(2, "2023-W31");
+
+        // Then
+        assertThat(report.getPeerEvaluationAverages()).extracting(PeerEvaluationAverage::getStudentId).containsExactly(3, 4, 5, 6, 7);
+    }
+
+    @Test
+    void testWeeklyReportOmitsADeactivatedStudentForAWeekWithNoEvaluationsOfHer() {
+        // Given: BR-deactivated-student; Eric is deactivated, and no one evaluated him for 2023-W40
+        this.eric.setEnabled(false);
+        given(this.sectionRepository.findById(anyInt())).willReturn(Optional.of(new Section("2023-2024", LocalDate.of(2023, 8, 14), LocalDate.of(2024, 4, 29), true, DayOfWeek.MONDAY, LocalTime.of(23, 59), DayOfWeek.TUESDAY, LocalTime.of(23, 59))));
+        given(this.studentRepository.findBySectionSectionId(anyInt())).willReturn(this.students);
+        given(this.evaluationRepository.existsByWeekAndEvaluateeId("2023-W40", 4)).willReturn(false);
+        given(this.evaluationRepository.findByWeekAndEvaluateeId(eq("2023-W40"), anyInt())).willReturn(List.of());
+
+        // When
+        WeeklyPeerEvaluationReport report = this.evaluationService.generateWeeklyPeerEvaluationReportForSection(2, "2023-W40");
+
+        // Then: active students with no evaluations still appear; the deactivated one does not
+        assertThat(report.getPeerEvaluationAverages()).extracting(PeerEvaluationAverage::getStudentId).containsExactly(3, 5, 6, 7);
     }
 
     @Test

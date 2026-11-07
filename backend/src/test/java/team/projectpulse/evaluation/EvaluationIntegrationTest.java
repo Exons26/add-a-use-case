@@ -789,4 +789,77 @@ public class EvaluationIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.message").value("The ratings are not valid. Please make sure all criteria in the rubric are rated and each criterion is rated only once."));
     }
 
+    // BR-deactivated-student (UC-STU-deactivate-student)
+
+    private void deactivateEric() throws Exception {
+        this.mockMvc.perform(put(this.baseUrl + "/students/5/deactivate").header(HttpHeaders.AUTHORIZATION, this.adminBingyangToken))
+                .andExpect(jsonPath("$.flag").value(true));
+    }
+
+    private void fixClockAt(LocalDate date) {
+        Clock fixedClock = Clock.fixed(date.atStartOfDay(ZoneId.systemDefault()).toInstant(), ZoneId.systemDefault());
+        given(this.clock.instant()).willReturn(fixedClock.instant());
+        given(this.clock.getZone()).willReturn(fixedClock.getZone());
+    }
+
+    private static List<RatingDto> ratings() {
+        return List.of(
+                new RatingDto(null, 1, 4.0),
+                new RatingDto(null, 2, 9.0),
+                new RatingDto(null, 3, 7.0),
+                new RatingDto(null, 4, 10.0),
+                new RatingDto(null, 5, 5.0),
+                new RatingDto(null, 6, 6.0)
+        );
+    }
+
+    @Test
+    @DisplayName("No one may submit a peer evaluation of a deactivated student, even for a week before she was deactivated")
+    void testStudentJohnCannotEvaluateADeactivatedTeammate() throws Exception {
+        deactivateEric();
+        fixClockAt(LocalDate.of(2023, 9, 15)); // previous week is 2023-W36, which Eric was active through
+
+        PeerEvaluationDto peerEvaluationDto = new PeerEvaluationDto(null, "2023-W36", 4, "John Smith", 5, "Eric Hudson", ratings(), 41.0, "Good job", "Keep it up", null, null);
+        String json = this.jsonMapper.writeValueAsString(peerEvaluationDto);
+
+        this.mockMvc.perform(post(this.baseUrl + "/evaluations").contentType(MediaType.APPLICATION_JSON).content(json).accept(MediaType.APPLICATION_JSON).header(HttpHeaders.AUTHORIZATION, this.studentJohnToken))
+                .andExpect(jsonPath("$.flag").value(false))
+                .andExpect(jsonPath("$.code").value(StatusCode.INVALID_ARGUMENT))
+                .andExpect(jsonPath("$.message").value("Eric Hudson has been deactivated and can no longer be evaluated."));
+        assertThat(this.evaluationRepository.findByWeekAndEvaluatorIdAndEvaluateeId("2023-W36", 4, 5)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("No one may change a peer evaluation of a deactivated student, even while its window is open")
+    void testStudentJohnCannotUpdateHisEvaluationOfADeactivatedTeammate() throws Exception {
+        deactivateEric();
+        fixClockAt(LocalDate.of(2023, 8, 8)); // previous week is 2023-W31, so evaluation 1 (John of Eric) is in its window
+
+        PeerEvaluationDto peerEvaluationDto = new PeerEvaluationDto(1, "2023-W31", 4, "John Smith", 5, "Eric Hudson", ratings(), 41.0, "Changed", "Changed", null, null);
+        String json = this.jsonMapper.writeValueAsString(peerEvaluationDto);
+
+        this.mockMvc.perform(put(this.baseUrl + "/evaluations/1").contentType(MediaType.APPLICATION_JSON).content(json).accept(MediaType.APPLICATION_JSON).header(HttpHeaders.AUTHORIZATION, this.studentJohnToken))
+                .andExpect(jsonPath("$.flag").value(false))
+                .andExpect(jsonPath("$.code").value(StatusCode.INVALID_ARGUMENT))
+                .andExpect(jsonPath("$.message").value("Eric Hudson has been deactivated and can no longer be evaluated."));
+
+        this.entityManager.flush();
+        this.entityManager.clear();
+        assertThat(this.evaluationRepository.findById(1).orElseThrow().getPublicComment()).isNotEqualTo("Changed");
+    }
+
+    @Test
+    @DisplayName("The section report keeps a deactivated student only for weeks with evaluations of her")
+    void testSectionReportListsADeactivatedStudentOnlyForWeeksWithEvaluationsOfHer() throws Exception {
+        deactivateEric();
+
+        this.mockMvc.perform(get(this.baseUrl + "/evaluations/sections/2/week/2023-W31").header(HttpHeaders.AUTHORIZATION, this.adminBingyangToken))
+                .andExpect(jsonPath("$.flag").value(true))
+                .andExpect(jsonPath("$.data.peerEvaluationAverages[*].studentId", Matchers.hasItem(5)));
+        this.mockMvc.perform(get(this.baseUrl + "/evaluations/sections/2/week/2023-W40").header(HttpHeaders.AUTHORIZATION, this.adminBingyangToken))
+                .andExpect(jsonPath("$.flag").value(true))
+                .andExpect(jsonPath("$.data.peerEvaluationAverages[*].studentId", Matchers.hasItem(4)))
+                .andExpect(jsonPath("$.data.peerEvaluationAverages[*].studentId", Matchers.not(Matchers.hasItem(5))));
+    }
+
 }

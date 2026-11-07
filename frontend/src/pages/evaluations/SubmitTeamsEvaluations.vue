@@ -202,14 +202,21 @@ async function prepareStartingPeerEvaluations() {
     previousWeek.value
   )
 
+  // A deactivated teammate can no longer be evaluated, for any week (BR-deactivated-student), so she gets no row.
+  // Each row is saved in one Promise.all, and a single refused row would fail the whole save.
+  const activeTeammates = students.value.filter((student) => student.enabled !== false)
+  const activeTeammateIds = new Set(activeTeammates.map((student) => student.id))
+
   // If the student has already submitted evaluations for the current week, load them
   if (result.data.length > 0) {
-    peerEvalutions.value = result.data
+    peerEvalutions.value = result.data.filter((evaluation) =>
+      activeTeammateIds.has(evaluation.evaluateeId)
+    )
     isNewSubmission = false
   } else {
     // If not, create a new set of evaluations
     isNewSubmission = true
-    peerEvalutions.value = students.value.map((student) => ({
+    peerEvalutions.value = activeTeammates.map((student) => ({
       week: previousWeek.value,
       evaluatorId: (userInfoStore.userInfo as Student).id as number,
       evaluateeId: student.id as number,
