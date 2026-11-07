@@ -466,6 +466,27 @@ class EvaluationServiceTest {
     }
 
     @Test
+    void testAddPeerEvaluationOfADeactivatedStudentOnAnotherTeam() {
+        // Given: the window for 2023-W31 is open; Woody is deactivated and on team 2, John is on team 1
+        LocalDate fixedDate = LocalDate.of(2023, 8, 13); // previous week is 2023-W31
+        Clock fixedClock = Clock.fixed(fixedDate.atStartOfDay(ZoneId.systemDefault()).toInstant(), ZoneId.systemDefault());
+        given(this.clock.instant()).willReturn(fixedClock.instant());
+        given(this.clock.getZone()).willReturn(fixedClock.getZone());
+        this.woody.setEnabled(false);
+
+        PeerEvaluation newPeerEvaluation = new PeerEvaluation("2023-W31", this.john, this.woody, List.of(), "public comment", "private comment");
+
+        // When
+        Throwable throwable = catchThrowable(() -> this.evaluationService.addPeerEvaluation(newPeerEvaluation));
+
+        // Then: the same-team refusal, which reveals neither Woody's name nor that he is deactivated
+        assertThat(throwable)
+                .isInstanceOf(PeerEvaluationIllegalArgumentException.class)
+                .hasMessage("The evaluator and evaluatee must be on the same team.");
+        verify(this.evaluationRepository, times(0)).save(any(PeerEvaluation.class));
+    }
+
+    @Test
     void testUpdatePeerEvaluationOfADeactivatedStudent() {
         // Given: BR-deactivated-student / BR-evaluation-editable-until-close; the window is open but Eric is deactivated
         LocalDate fixedDate = LocalDate.of(2023, 8, 8); // previous week is 2023-W31
