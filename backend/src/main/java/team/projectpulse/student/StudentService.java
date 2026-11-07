@@ -4,6 +4,8 @@ import team.projectpulse.section.Section;
 import team.projectpulse.section.SectionRepository;
 import team.projectpulse.system.UserUtils;
 import team.projectpulse.system.exception.ObjectNotFoundException;
+import team.projectpulse.system.exception.StudentAlreadyDeactivatedException;
+import team.projectpulse.system.exception.StudentIllegalArgumentException;
 import team.projectpulse.user.userinvitation.UserInvitationService;
 import jakarta.transaction.Transactional;
 import org.springframework.data.domain.Page;
@@ -108,21 +110,47 @@ public class StudentService {
         Student oldStudent = this.studentRepository.findById(studentId)
                 .orElseThrow(() -> new ObjectNotFoundException("student", studentId));
 
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        boolean callerIsInstructor = authentication.getAuthorities().stream().anyMatch(grantedAuthority -> grantedAuthority.getAuthority().equals("ROLE_instructor"));
+
+        // Deactivation goes only through deactivateStudent, which warns, asks for confirmation, and is open to the
+        // course admin (UC-STU-deactivate-student). This path may still reactivate, as the interim reactivation path
+        // until UC-STU-reactivate-student gets its own endpoint.
+        if (callerIsInstructor && oldStudent.isEnabled() && !update.isEnabled()) {
+            throw new StudentIllegalArgumentException("A student is deactivated through PUT /students/{studentId}/deactivate, not by editing the student.");
+        }
+
         // If the user is not an admin, then the user can only update her username, first rubricName, last rubricName, and email
         oldStudent.setUsername(update.getUsername());
         oldStudent.setFirstName(update.getFirstName());
         oldStudent.setLastName(update.getLastName());
         oldStudent.setEmail(update.getEmail());
 
-        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-
         // If the user is an admin, then the user can update all the fields
-        if (authentication.getAuthorities().stream().anyMatch(grantedAuthority -> grantedAuthority.getAuthority().equals("ROLE_instructor"))) {
+        if (callerIsInstructor) {
             oldStudent.setEnabled(update.isEnabled());
 //            oldStudent.setRoles(update.getRoles());
         }
 
         return this.studentRepository.save(oldStudent);
+    }
+
+    /**
+     * Deactivates a student's account (UC-STU-deactivate-student). Who may do this is decided by the route rule
+     * ({@code StudentLifecycleAuthorizationManager}), not here. She keeps her team, her weekly activity reports, and
+     * her peer evaluations (BR-deactivated-student); only the {@code enabled} flag changes, and the per-request
+     * active-account check then refuses her next request (FR-SEC-active-account).
+     *
+     * @throws StudentAlreadyDeactivatedException if she is already deactivated (extension 3a)
+     */
+    public Student deactivateStudent(Integer studentId) {
+        Student student = this.studentRepository.findById(studentId)
+                .orElseThrow(() -> new ObjectNotFoundException("student", studentId));
+        if (!student.isEnabled()) {
+            throw new StudentAlreadyDeactivatedException(studentId);
+        }
+        student.setEnabled(false);
+        return this.studentRepository.save(student);
     }
 
     public void deleteStudent(Integer studentId) {

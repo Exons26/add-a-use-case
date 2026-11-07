@@ -7,6 +7,7 @@ import type {
   DeleteStudentResponse,
   FindStudentByIdResponse,
   UpdateStudentResponse,
+  DeactivateStudentResponse,
   Student,
   RegistrationParams,
   FindStudentByTeamIdResponse
@@ -39,3 +40,7 @@ export const updateStudent = (updatedStudent: Student) =>
 
 export const deleteStudent = (id: number) =>
   request.delete<any, DeleteStudentResponse>(`${API.STUDENTS_ENDPOINT}/${id}`)
+
+// UC-STU-deactivate-student: deactivation has its own endpoint; the generic update cannot deactivate
+export const deactivateStudent = (id: number) =>
+  request.put<any, DeactivateStudentResponse>(`${API.STUDENTS_ENDPOINT}/${id}/deactivate`)

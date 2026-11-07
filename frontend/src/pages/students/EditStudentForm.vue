@@ -14,7 +14,23 @@
       <el-input v-model="studentBeingEdited.username"></el-input>
     </el-form-item>
     <el-form-item label="Status:" prop="enabled">
+      <!-- An active student is deactivated only through the Deactivate button (UC-STU-deactivate-student) -->
+      <template v-if="isActive">
+        <el-tag type="success">Enabled</el-tag>
+        <el-button
+          type="danger"
+          plain
+          size="small"
+          style="margin-left: 12px"
+          :loading="deactivating"
+          @click="deactivateExistingStudent()"
+        >
+          Deactivate
+        </el-button>
+      </template>
+      <!-- Extension 3a1: a deactivated student is offered reactivation instead (interim path until UC-STU-reactivate-student) -->
       <el-switch
+        v-else
         v-model="studentBeingEdited.enabled"
         inline-prompt
         active-text="Enabled"
@@ -42,11 +58,11 @@
 </template>
 
 <script setup lang="ts">
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import type { Student } from '@/apis/student/types'
 import type { FormInstance } from 'element-plus'
-import { findStudentById, updateStudent } from '@/apis/student'
-import { ref, onMounted } from 'vue'
+import { deactivateStudent, findStudentById, updateStudent } from '@/apis/student'
+import { h, ref, onMounted } from 'vue'
 
 const { studentId } = defineProps(['studentId'])
 const emit = defineEmits(['close-dialog'])
@@ -61,6 +77,10 @@ const studentBeingEdited = ref<Student>({
   lastName: '',
   email: ''
 })
+
+// Whether the student was active when loaded; decides between the Deactivate button and the reactivation switch
+const isActive = ref<boolean>(false)
+const deactivating = ref<boolean>(false)
 
 const studentForm = ref<FormInstance>() // Form reference
 
@@ -98,6 +118,7 @@ async function loadStudent(studentId: number) {
   studentBeingEdited.value.lastName = result.data.lastName
   studentBeingEdited.value.email = result.data.email
   studentBeingEdited.value.teamName = result.data.teamName
+  isActive.value = result.data.enabled === true
 }
 
 onMounted(() => {
@@ -110,7 +131,8 @@ async function updateExistingStudent() {
   const updatedStudent: Student = {
     id: studentBeingEdited.value.id,
     username: studentBeingEdited.value.username,
-    enabled: studentBeingEdited.value.enabled,
+    // An active student stays active here: deactivation has its own confirmed action
+    enabled: isActive.value ? true : studentBeingEdited.value.enabled,
     firstName: studentBeingEdited.value.firstName,
     lastName: studentBeingEdited.value.lastName,
     email: studentBeingEdited.value.email
@@ -121,6 +143,49 @@ async function updateExistingStudent() {
 
   ElMessage.success('Student updated successfully')
   emit('close-dialog')
+}
+
+// UC-STU-deactivate-student, steps 3-6: warn with every consequence, ask for confirmation, then deactivate
+async function deactivateExistingStudent() {
+  const name = `${studentBeingEdited.value.firstName} ${studentBeingEdited.value.lastName}`
+  const consequences = [
+    'They will no longer be able to log in or submit weekly activity reports and peer evaluations. If they are logged in now, they are signed out on their next action.',
+    'Their account and previously submitted weekly activity reports and peer evaluations are kept.',
+    'They stay on their team. Teammates no longer owe, and can no longer submit, peer evaluations of them, and reminders to them stop.',
+    'They can be reactivated later. This is not deletion.'
+  ]
+
+  try {
+    await ElMessageBox.confirm(
+      h('div', [
+        h('p', `Deactivate ${name}?`),
+        h(
+          'ul',
+          { style: 'padding-left: 18px; margin: 8px 0 0' },
+          consequences.map((c) => h('li', c))
+        )
+      ]),
+      'Deactivate student',
+      {
+        confirmButtonText: 'Deactivate',
+        cancelButtonText: 'Cancel',
+        type: 'warning'
+      }
+    )
+  } catch {
+    // Extension 4a: canceled at the warning; no request is sent and the student stays active
+    ElMessage.info('Deactivation canceled')
+    return
+  }
+
+  deactivating.value = true
+  try {
+    await deactivateStudent(studentBeingEdited.value.id as number)
+    ElMessage.success(`${name} has been deactivated.`)
+    emit('close-dialog')
+  } finally {
+    deactivating.value = false
+  }
 }
 </script>
 

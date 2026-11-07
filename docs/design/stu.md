@@ -53,7 +53,8 @@ classDiagram
         +findOwedItems(sectionId, items, week)
     }
     class UserRepository {
-        <<reused>>
+        <<modified>>
+        +existsByIdAndEnabledTrue(id) boolean
     }
     StudentLifecycleAuthorizationManager --> StudentSecurityService
     StudentController --> StudentService
@@ -66,7 +67,7 @@ classDiagram
 |---|---|---|
 | Deactivate endpoint and service method | modified | [`StudentController`](../../backend/src/main/java/team/projectpulse/student/StudentController.java), [`StudentService`](../../backend/src/main/java/team/projectpulse/student/StudentService.java) |
 | Who may deactivate | new manager + one new check | `security/authorizationmanagers/StudentLifecycleAuthorizationManager`, [`StudentSecurityService`](../../backend/src/main/java/team/projectpulse/student/StudentSecurityService.java) `isCurrentUserAdminOfStudentCourse` |
-| Active-account check on every request | new | `security/ActiveAccountJwtAuthenticationConverter`, registered in [`SecurityConfiguration`](../../backend/src/main/java/team/projectpulse/security/SecurityConfiguration.java) |
+| Active-account check on every request | new | `security/ActiveAccountJwtAuthenticationConverter`, registered in [`SecurityConfiguration`](../../backend/src/main/java/team/projectpulse/security/SecurityConfiguration.java); queries [`UserRepository`](../../backend/src/main/java/team/projectpulse/user/UserRepository.java) `existsByIdAndEnabledTrue` |
 | 3a rejection | new | `system/exception/StudentAlreadyDeactivatedException`, mapped in [`ExceptionHandlerAdvice`](../../backend/src/main/java/team/projectpulse/system/exception/ExceptionHandlerAdvice.java) |
 | Evaluations of a deactivated student | modified | [`EvaluationService`](../../backend/src/main/java/team/projectpulse/evaluation/EvaluationService.java) |
 | Reminders stop | reused, unchanged | [`SubmissionStatusService`](../../backend/src/main/java/team/projectpulse/notification/SubmissionStatusService.java) `findOwedItems` already filters `isEnabled()` |
@@ -123,7 +124,7 @@ sequenceDiagram
     participant F as Security filter chain
     participant E as EvaluationService
     St->>F: any request (Bearer JWT)
-    F->>F: ActiveAccountJwtAuthenticationConverter loads user by userId claim: enabled = false
+    F->>F: ActiveAccountJwtAuthenticationConverter: existsByIdAndEnabledTrue(userId claim) = false
     F-->>St: 401 → SPA clears the token and routes to login (6a1)
     Tm->>E: POST /evaluations or PUT /evaluations/{id} (evaluatee is deactivated)
     E-->>Tm: PeerEvaluationIllegalArgumentException → 400, any week
@@ -143,7 +144,7 @@ sequenceDiagram
 
 ## Key decisions
 
-- **Re-check `enabled` on every request, in the JWT authentication converter.** It wraps the existing `jwtAuthenticationConverter()` bean, loads the user by the `userId` claim, and throws `DisabledException` if the account is disabled or gone. Spring's bearer-token failure path turns that into 401, which the SPA already treats as a logout. It applies to instructors too, as FR-SEC-active-account requires. *Rejected:* a shorter token lifetime, which narrows the window but never closes it; a revocation list, which is server state and blocks the multi-instance path; a token-version claim, which still needs the same lookup; a servlet filter after authentication, which would need its own 401 handling. *Cost:* one primary-key read per authenticated request, acceptable at this scale. **This must be the first commit of the implementation**, because every other flow depends on it.
+- **Re-check `enabled` on every request, in the JWT authentication converter.** It wraps the existing `jwtAuthenticationConverter()` bean, checks the `userId` claim with `UserRepository.existsByIdAndEnabledTrue`, and throws `DisabledException` if the account is disabled or gone (or the claim is missing). The check is an exists query, not an entity load: loading a `Student` would eagerly pull her course section and team on every API call. Spring's bearer-token failure path turns that into 401, which the SPA already treats as a logout. It applies to instructors too, as FR-SEC-active-account requires. *Rejected:* a shorter token lifetime, which narrows the window but never closes it; a revocation list, which is server state and blocks the multi-instance path; a token-version claim, which still needs the same lookup; a servlet filter after authentication, which would need its own 401 handling. *Cost:* one primary-key read per authenticated request, acceptable at this scale. **This must be the first commit of the implementation**, because every other flow depends on it.
 - **A dedicated action endpoint, not the generic PUT.** The generic PUT also rewrites name and email, cannot express the 3a rejection, and admits section instructors but not course admins. *Rejected:* widening the generic PUT's authorization to course admins, because that would let them edit any student's profile, which no use case asks for.
 - **3a is a 409 rejection, not a silent no-op**, so a stale screen tells the actor the truth.
 - **The generic PUT can still reactivate but can no longer deactivate.** That keeps UC-STU-reactivate-student working through the Edit Student switch until it gets its own endpoint, while closing the path that bypassed steps 4–5. The switch then renders only for a disabled student. Remove both when reactivate is designed.
@@ -178,13 +179,13 @@ No change: the `enabled` column already exists on the user table (`PeerEvaluatio
 | BR-deactivated-student: she stays on her team | unit | `deactivateStudent` leaves `team` untouched |
 | BR-deactivated-student: no new evaluation of her, any week | unit + integration | `POST /evaluations` with a deactivated evaluatee → 400, including the week before she was deactivated |
 | BR-deactivated-student: no change to an evaluation of her | unit + integration | `PUT /evaluations/{id}` with a deactivated evaluatee → 400; evaluation unchanged |
-| BR-deactivated-student: report lists her only for weeks with evaluations of her | unit | Week with evaluations: present; week without: absent |
+| BR-deactivated-student: report lists her only for weeks with evaluations of her | unit + integration | Week with evaluations: present; week without: absent (`PeerEvaluationRepository.existsByWeekAndEvaluateeId`) |
 | BR-deactivated-student: her work is kept | integration | After deactivation, an instructor still reads her activities and peer evaluations |
 | BR-submission-owed: reminders stop | unit | `findOwedItems` excludes her as an ower and as a teammate to evaluate |
 | Generic PUT cannot deactivate | integration | `PUT /students/{id}` with `enabled` true→false → 400; she stays enabled |
 | Generic PUT still reactivates | integration | `PUT /students/{id}` with `enabled` false→true → 200; `enabled` true |
 
-Test setup: `AbstractIntegrationTest` already rolls back each test. The dev seed (`DataInitializer`) needs, if it lacks them, a course admin of the student's course who is not assigned to her course section, an instructor of another course section, an already-disabled student, a disabled instructor, and peer evaluations of the target student in one week but not another.
+Test setup: `AbstractIntegrationTest` already rolls back each test, so each test arranges its own state inside that transaction rather than through new `DataInitializer` seed rows, which would shift counts asserted by unrelated tests. A test makes Tim the course admin of John's course (he is not assigned to John's course section), deactivates a student or instructor through the endpoint or the entity, and relies on the seed's existing peer evaluations of Eric in 2023-W31 and none in 2023-W40. Tim, as the admin of course 3, is the instructor of another course section.
 
 ## Build order
 
