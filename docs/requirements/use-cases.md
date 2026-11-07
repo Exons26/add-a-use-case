@@ -1473,12 +1473,27 @@ Details:
 7. Use case ends.
 
 **Extensions:**
+- **3a. The selected student is already deactivated:**
+  - 3a1. The system does not offer to deactivate her; it offers to reactivate her instead (UC-STU-reactivate-student: Reactivate a student).
+  - 3a2. If deactivation is requested anyway, the system reports that she is already deactivated and changes nothing.
+  - 3a3. Use case ends.
+- **3b. The actor is neither a course admin nor an instructor assigned to the student's course section (BR-student-lifecycle):**
+  - 3b1. The system denies the request and changes nothing.
+  - 3b2. Use case ends.
+- **4a. The course admin or instructor cancels at the warning:**
+  - 4a1. The system makes no change, and the student stays active (per the cancel provision in the Associated Information of this use case).
+  - 4a2. Use case ends.
+- **6a. The student is logged in when she is deactivated:**
+  - 6a1. The system denies her next request even though her token is still valid (FR-SEC-active-account). The check applies to every request, not only at sign-in.
+  - 6a2. Use case ends.
+
 **Priority:** Low
 **Frequency of Use:** Rare. Occurs occasionally when a student withdraws from a course section.
-**Business Rules:** BR-student-lifecycle
+**Business Rules:** BR-student-lifecycle, BR-deactivated-student, BR-submission-owed
 
 **Associated Information:**
 - Consequence of the deactivation: The student will no longer be able to log in or submit weekly activity reports and peer evaluations, but the student's account and her previously submitted work are kept in the system. Deactivation will NOT remove the student from the system, and the account can be reactivated in the future (UC-STU-reactivate-student: Reactivate a student). This is distinct from deletion (UC-STU-delete-student: Delete a student), which is a physical, unrecoverable delete. The course admin or instructor shall be able to cancel the use case at any time prior to submitting it.
+- Further consequences (BR-deactivated-student, BR-submission-owed): she stays on her team; her teammates no longer owe, and can no longer submit, peer evaluations of her; and reminders to her stop.
 
 **Related Use Cases:** UC-STU-delete-student: Delete a student; UC-STU-reactivate-student: Reactivate a student
 **Assumptions:**
