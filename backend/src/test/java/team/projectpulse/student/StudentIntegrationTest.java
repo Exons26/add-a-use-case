@@ -440,4 +440,37 @@ class StudentIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.data", Matchers.not(Matchers.empty())));
     }
 
+    private ResultActions editJohn(boolean enabled, String token) throws Exception {
+        Map<String, Object> studentDto = new HashMap<>();
+        studentDto.put("username", "j.smith@abc.edu");
+        studentDto.put("firstName", "John");
+        studentDto.put("lastName", "Smith");
+        studentDto.put("email", "j.smith@abc.edu");
+        studentDto.put("enabled", enabled);
+        String json = this.jsonMapper.writeValueAsString(studentDto);
+        return this.mockMvc.perform(put(this.baseUrl + "/students/4").contentType(MediaType.APPLICATION_JSON).content(json).accept(MediaType.APPLICATION_JSON).header(HttpHeaders.AUTHORIZATION, token));
+    }
+
+    @Test
+    void testInstructorCannotDeactivateStudentThroughTheGenericUpdate() throws Exception {
+        // Deactivation goes only through PUT /students/{id}/deactivate, which warns and confirms first
+        editJohn(false, this.instructorBillToken)
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.flag").value(false))
+                .andExpect(jsonPath("$.code").value(StatusCode.INVALID_ARGUMENT));
+        assertThat(student(4).isEnabled()).isTrue();
+    }
+
+    @Test
+    void testInstructorStillReactivatesStudentThroughTheGenericUpdate() throws Exception {
+        // The interim reactivation path, until UC-STU-reactivate-student gets its own endpoint
+        deactivate(4, this.instructorBillToken).andExpect(status().isOk());
+
+        editJohn(true, this.instructorBillToken)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.flag").value(true))
+                .andExpect(jsonPath("$.data.enabled").value(true));
+        assertThat(student(4).isEnabled()).isTrue();
+    }
+
 }

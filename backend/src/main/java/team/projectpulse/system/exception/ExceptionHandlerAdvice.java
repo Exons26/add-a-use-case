@@ -149,6 +149,12 @@ public class ExceptionHandlerAdvice {
         return new Result(false, StatusCode.INVALID_ARGUMENT, ex.getMessage());
     }
 
+    @ExceptionHandler(StudentIllegalArgumentException.class)
+    @ResponseStatus(HttpStatus.BAD_REQUEST)
+    Result handleStudentIllegalArgumentException(StudentIllegalArgumentException ex) {
+        return new Result(false, StatusCode.INVALID_ARGUMENT, ex.getMessage());
+    }
+
     @ExceptionHandler(InvalidUserInvitationException.class)
     @ResponseStatus(HttpStatus.BAD_REQUEST)
     Result handleInvalidRegistrationTokenException(InvalidUserInvitationException ex) {
