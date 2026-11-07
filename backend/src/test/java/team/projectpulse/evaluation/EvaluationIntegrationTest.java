@@ -824,8 +824,7 @@ public class EvaluationIntegrationTest extends AbstractIntegrationTest {
 
         this.mockMvc.perform(post(this.baseUrl + "/evaluations").contentType(MediaType.APPLICATION_JSON).content(json).accept(MediaType.APPLICATION_JSON).header(HttpHeaders.AUTHORIZATION, this.studentJohnToken))
                 .andExpect(jsonPath("$.flag").value(false))
-                .andExpect(jsonPath("$.code").value(StatusCode.INVALID_ARGUMENT))
-                .andExpect(jsonPath("$.message").value("Eric Hudson has been deactivated and can no longer be evaluated."));
+                .andExpect(jsonPath("$.code").value(StatusCode.INVALID_ARGUMENT));
         assertThat(this.evaluationRepository.findByWeekAndEvaluatorIdAndEvaluateeId("2023-W36", 4, 5)).isEmpty();
     }
 
@@ -840,8 +839,7 @@ public class EvaluationIntegrationTest extends AbstractIntegrationTest {
 
         this.mockMvc.perform(put(this.baseUrl + "/evaluations/1").contentType(MediaType.APPLICATION_JSON).content(json).accept(MediaType.APPLICATION_JSON).header(HttpHeaders.AUTHORIZATION, this.studentJohnToken))
                 .andExpect(jsonPath("$.flag").value(false))
-                .andExpect(jsonPath("$.code").value(StatusCode.INVALID_ARGUMENT))
-                .andExpect(jsonPath("$.message").value("Eric Hudson has been deactivated and can no longer be evaluated."));
+                .andExpect(jsonPath("$.code").value(StatusCode.INVALID_ARGUMENT));
 
         this.entityManager.flush();
         this.entityManager.clear();

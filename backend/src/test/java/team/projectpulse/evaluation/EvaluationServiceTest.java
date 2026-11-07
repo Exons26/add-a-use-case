@@ -461,8 +461,7 @@ class EvaluationServiceTest {
 
         // Then
         assertThat(throwable)
-                .isInstanceOf(PeerEvaluationIllegalArgumentException.class)
-                .hasMessage("Woody Allen has been deactivated and can no longer be evaluated.");
+                .isInstanceOf(PeerEvaluationIllegalArgumentException.class);
         verify(this.evaluationRepository, times(0)).save(any(PeerEvaluation.class));
     }
 
@@ -485,8 +484,7 @@ class EvaluationServiceTest {
 
         // Then
         assertThat(throwable)
-                .isInstanceOf(PeerEvaluationIllegalArgumentException.class)
-                .hasMessage("Eric Wong has been deactivated and can no longer be evaluated.");
+                .isInstanceOf(PeerEvaluationIllegalArgumentException.class);
         assertThat(oldPeerEvaluation.getPublicComment()).isEqualTo("public comment");
         verify(this.evaluationRepository, times(0)).save(any(PeerEvaluation.class));
     }

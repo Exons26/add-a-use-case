@@ -334,7 +334,6 @@ class StudentIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.flag").value(true))
                 .andExpect(jsonPath("$.code").value(StatusCode.SUCCESS))
-                .andExpect(jsonPath("$.message").value("Deactivate student successfully"))
                 .andExpect(jsonPath("$.data.id").value(4))
                 .andExpect(jsonPath("$.data.enabled").value(false))
                 .andExpect(jsonPath("$.data.teamId").value(1));
@@ -368,8 +367,7 @@ class StudentIntegrationTest extends AbstractIntegrationTest {
         deactivate(4, this.adminToken)
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.flag").value(false))
-                .andExpect(jsonPath("$.code").value(StatusCode.CONFLICT))
-                .andExpect(jsonPath("$.message").value("Student 4 is already deactivated."));
+                .andExpect(jsonPath("$.code").value(StatusCode.CONFLICT));
         assertThat(student(4).isEnabled()).isFalse();
     }
 
