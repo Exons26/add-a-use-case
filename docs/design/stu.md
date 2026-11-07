@@ -70,7 +70,8 @@ classDiagram
 | 3a rejection | new | `system/exception/StudentAlreadyDeactivatedException`, mapped in [`ExceptionHandlerAdvice`](../../backend/src/main/java/team/projectpulse/system/exception/ExceptionHandlerAdvice.java) |
 | Evaluations of a deactivated student | modified | [`EvaluationService`](../../backend/src/main/java/team/projectpulse/evaluation/EvaluationService.java) |
 | Reminders stop | reused, unchanged | [`SubmissionStatusService`](../../backend/src/main/java/team/projectpulse/notification/SubmissionStatusService.java) `findOwedItems` already filters `isEnabled()` |
-| SPA | modified | [`apis/student`](../../frontend/src/apis/student/index.ts) `deactivateStudent`; [`EditStudentForm.vue`](../../frontend/src/pages/students/EditStudentForm.vue) and [`Students.vue`](../../frontend/src/pages/students/Students.vue) (Deactivate button + confirm dialog); [`SubmitTeamsEvaluations.vue`](../../frontend/src/pages/evaluations/SubmitTeamsEvaluations.vue) (drops disabled teammates) |
+| Generic PUT refuses deactivation | new | `system/exception/StudentIllegalArgumentException`, mapped to `INVALID_ARGUMENT` (400) like the other per-slice `*IllegalArgumentException`s |
+| SPA | modified | [`apis/student`](../../frontend/src/apis/student/index.ts) `deactivateStudent`; [`EditStudentForm.vue`](../../frontend/src/pages/students/EditStudentForm.vue), the student dialog opened from [`Students.vue`](../../frontend/src/pages/students/Students.vue) (step 2), gets the Deactivate button and the confirm dialog; the list itself only shows status. [`SubmitTeamsEvaluations.vue`](../../frontend/src/pages/evaluations/SubmitTeamsEvaluations.vue) drops a teammate whose `enabled` (already on `StudentDto`) is false from the rows it creates **and** from the evaluations it re-submits on update, because it saves each row in one `Promise.all` and a single 400 would fail the whole save |
 
 ## Sequence
 
@@ -79,7 +80,7 @@ classDiagram
 ```mermaid
 sequenceDiagram
     actor A as Course admin / instructor
-    participant V as EditStudentForm.vue / Students.vue
+    participant V as EditStudentForm.vue (student dialog)
     participant SC as Security filter chain
     participant C as StudentController
     participant S as StudentService
@@ -146,8 +147,12 @@ sequenceDiagram
 - **A dedicated action endpoint, not the generic PUT.** The generic PUT also rewrites name and email, cannot express the 3a rejection, and admits section instructors but not course admins. *Rejected:* widening the generic PUT's authorization to course admins, because that would let them edit any student's profile, which no use case asks for.
 - **3a is a 409 rejection, not a silent no-op**, so a stale screen tells the actor the truth.
 - **The generic PUT can still reactivate but can no longer deactivate.** That keeps UC-STU-reactivate-student working through the Edit Student switch until it gets its own endpoint, while closing the path that bypassed steps 4–5. The switch then renders only for a disabled student. Remove both when reactivate is designed.
-- **Who may deactivate lives in an `AuthorizationManager`**, per the [architectural conventions](architectural-design.md#architectural-conventions). The service does not check it again.
-- **The report keys on whether evaluations of her exist, not on a date.** BR-deactivated-student says there is no deactivation date. *Rejected:* adding a `deactivatedAt` column, because no requirement needs one and it would invite a "before/after" rule the business rule explicitly rejects.
+- **Who may deactivate lives in an `AuthorizationManager`**, per the [architectural conventions](architectural-design.md#architectural-conventions). The service does not check it again. The route gets its own rule, `.requestMatchers(PUT, base + "/students/{studentId}/deactivate").access(studentLifecycleAuthorizationManager)`, placed before the existing `/students/{studentId}` rules, with no role pre-check: the manager's two checks already fail every student.
+- **"A course admin" means the course admin who owns the student's course.** BR-student-lifecycle names the role; BR-section-scoped-access scopes it to her own course. *Rejected:* any course admin, which would let one course's admin act on another course's students.
+- **The confirm dialog states every consequence the use case names (step 4):** she can no longer log in or submit weekly activity reports and peer evaluations; her account, submitted work, and team stay; her teammates stop evaluating her and her reminders stop; she can be reactivated; this is not deletion. Wording is left to `/implement`.
+- **Login needs no change.** Spring Security's `DaoAuthenticationProvider` already rejects a disabled account (`MyUserPrincipal.isEnabled()`) with `DisabledException`, which `ExceptionHandlerAdvice` maps to 401 "User account is abnormal." The per-request check reuses `DisabledException`, so both paths answer the same way.
+- **Other "has not submitted" lists need no change.** The section WAR and peer-evaluation report pages already take theirs from `SubmissionStatusService` (`apis/notification` `getSubmissionStatus`), which applies BR-submission-owed to active accounts only.
+- **The report keys on whether evaluations of her exist, not on a date.** "Evaluations of her" means evaluations where she is the evaluatee; evaluations she wrote are not her row in the report. BR-deactivated-student says there is no deactivation date. *Rejected:* adding a `deactivatedAt` column, because no requirement needs one and it would invite a "before/after" rule the business rule explicitly rejects.
 
 ## Data model
 
@@ -179,7 +184,17 @@ No change: the `enabled` column already exists on the user table (`PeerEvaluatio
 | Generic PUT cannot deactivate | integration | `PUT /students/{id}` with `enabled` true→false → 400; she stays enabled |
 | Generic PUT still reactivates | integration | `PUT /students/{id}` with `enabled` false→true → 200; `enabled` true |
 
+Test setup: `AbstractIntegrationTest` already rolls back each test. The dev seed (`DataInitializer`) needs, if it lacks them, a course admin of the student's course who is not assigned to her course section, an instructor of another course section, an already-disabled student, a disabled instructor, and peer evaluations of the target student in one week but not another.
+
+## Build order
+
+1. `ActiveAccountJwtAuthenticationConverter` and its tests (the trunk; every other flow depends on it).
+2. Deactivate endpoint, authorization manager, and 409 exception.
+3. The generic PUT's refusal **together with** the SPA Deactivate button, so there is never a build with no way to deactivate.
+4. The evaluation slice (create, update, report) and `SubmitTeamsEvaluations.vue`.
+
 ## Open questions / risks
 
-- The Edit Student switch is an interim reactivation path. It goes away when UC-STU-reactivate-student is designed.
+- The Edit Student switch is an interim reactivation path. It goes away when UC-STU-reactivate-student is designed. **Known limitation until then:** the generic PUT admits section instructors but not course admins, so a course admin who is not assigned to the student's course section sees extension 3a1's offer to reactivate but gets 403 if she uses it. BR-student-lifecycle's course-admin clause for reactivation is met only when UC-STU-reactivate-student gets its own endpoint behind `StudentLifecycleAuthorizationManager`.
+- Two simultaneous deactivations of the same student can both return 200, because the user row has no `@Version`. That is accepted: the end state is the same, and the use case is rare.
 - The per-request account read is on the hot path of every API call. If it shows up in latency, cache with a short TTL. That reopens a window of at most the TTL, so it would need an amendment to FR-SEC-active-account first.
